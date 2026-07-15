@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { analyzeReport } from "./api";
 import type { Analysis, Contract, ScenarioSettings } from "./types";
 import { chooseSalesMessage, type RiskLevel } from "./salesMessages";
+import { collectReportFiles } from "./reportFiles";
 
 const ruble = new Intl.NumberFormat("ru-RU", {
   style: "currency",
@@ -40,7 +41,9 @@ function riskTone(count: number) {
   return count >= 3 ? "danger" : count >= 1 ? "warning" : "safe";
 }
 
-function Icon({ name }: { name: "upload" | "shield" | "copy" | "print" | "arrow" | "check" }) {
+type Theme = "light" | "dark";
+
+function Icon({ name }: { name: "upload" | "shield" | "copy" | "print" | "arrow" | "check" | "sun" | "moon" }) {
   const paths = {
     upload: <><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></>,
     shield: <><path d="M12 3 5 6v5c0 4.6 2.9 8.1 7 10 4.1-1.9 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></>,
@@ -48,32 +51,45 @@ function Icon({ name }: { name: "upload" | "shield" | "copy" | "print" | "arrow"
     print: <><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/></>,
     arrow: <><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></>,
     check: <path d="m5 12 4 4L19 6"/>,
+    sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></>,
+    moon: <path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/>,
   };
   return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
-function UploadScreen({ onLoaded }: { onLoaded: (analysis: Analysis) => void }) {
+function ThemeToggle({ theme, onToggle, compact = false }: { theme: Theme; onToggle: () => void; compact?: boolean }) {
+  const nextTheme = theme === "dark" ? "светлую" : "темную";
+  return <button type="button" className={`theme-toggle ${compact ? "compact" : ""}`} onClick={onToggle} aria-label={`Включить ${nextTheme} тему`} title={`Включить ${nextTheme} тему`}>
+    <Icon name={theme === "dark" ? "sun" : "moon"} />
+    <span>{theme === "dark" ? "Светлая" : "Темная"}</span>
+  </button>;
+}
+
+function UploadScreen({ onLoaded, theme, onToggleTheme }: { onLoaded: (analyses: Analysis[]) => void; theme: Theme; onToggleTheme: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [accessCode, setAccessCode] = useState(sessionStorage.getItem("access-code") || "");
 
-  async function handleFile(file?: File) {
-    if (!file || loading) return;
-    dragDepth.current = 0;
+  async function handleFiles(files: File[]) {
+    if (!files.length || loading) return;
     setDragging(false);
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setError("Выберите кредитный отчет в формате PDF");
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
     setLoading(true);
     setError("");
     try {
+      const pdfFiles = await collectReportFiles(files);
       sessionStorage.setItem("access-code", accessCode);
-      onLoaded(await analyzeReport(file, accessCode));
+      const results: Analysis[] = [];
+      for (const file of pdfFiles) {
+        try {
+          results.push(await analyzeReport(file, accessCode));
+        } catch (reason) {
+          const message = reason instanceof Error ? reason.message : "Не удалось обработать отчет";
+          throw new Error(`${file.name}: ${message}`);
+        }
+      }
+      onLoaded(results);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось обработать отчет");
     } finally {
@@ -83,40 +99,43 @@ function UploadScreen({ onLoaded }: { onLoaded: (analysis: Analysis) => void }) 
   }
 
   return (
-    <main className="upload-page">
+    <main
+      className={`upload-page ${dragging ? "file-dragging" : ""}`}
+      onDragEnter={(event) => { event.preventDefault(); if (event.dataTransfer.types.includes("Files")) setDragging(true); }}
+      onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+      onDragLeave={(event) => {
+        event.preventDefault();
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        void handleFiles(Array.from(event.dataTransfer.files));
+      }}
+    >
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
-      <header className="brand"><span className="brand-mark">Ф</span><span>Финразбор</span></header>
+      <div className="upload-header"><header className="brand"><span className="brand-mark">Ф</span><span>Финразбор</span></header><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
       <section className="upload-hero">
         <p className="eyebrow">КРЕДИТНАЯ ИСТОРИЯ → ПОНЯТНЫЙ РАЗГОВОР</p>
         <h1>Покажите клиенту,<br /><em>куда уходят его деньги.</em></h1>
         <p className="lead">Загрузите отчет ОКБ. За несколько секунд получите финансовую картину, сравнение с БФЛ и РДГ и отдельные сигналы для юриста.</p>
         <div
           className={`dropzone ${dragging ? "dragging" : ""} ${loading ? "loading" : ""}`}
-          onDragEnter={(event) => { event.preventDefault(); dragDepth.current += 1; setDragging(true); }}
-          onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
-          onDragLeave={(event) => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragging(false); }}
-          onDrop={(event) => {
-            event.preventDefault();
-            dragDepth.current = 0;
-            setDragging(false);
-            const files = Array.from(event.dataTransfer.files);
-            void handleFile(files.find((file) => file.name.toLowerCase().endsWith(".pdf")) || files[0]);
-          }}
           onClick={() => !loading && inputRef.current?.click()}
           role="button"
           tabIndex={0}
           aria-busy={loading}
-          aria-label="Перетащите кредитный отчет PDF сюда или нажмите для выбора файла"
+          aria-label="Перетащите кредитные отчеты PDF или ZIP сюда или нажмите для выбора файлов"
           onKeyDown={(event) => event.key === "Enter" && inputRef.current?.click()}
         >
-          <input ref={inputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => void handleFile(event.target.files?.[0])} />
+          <input ref={inputRef} type="file" accept="application/pdf,.pdf,application/zip,.zip" multiple hidden onChange={(event) => void handleFiles(Array.from(event.target.files || []))} />
           <span className="upload-icon"><Icon name="upload" /></span>
           <div>
-            <strong>{loading ? "Читаем кредитную историю…" : dragging ? "Отпустите PDF здесь" : "Перетащите PDF сюда"}</strong>
-            <span>{loading ? "Сверяем договоры и платежи" : dragging ? "Сразу начнем анализ отчета" : "или нажмите, чтобы выбрать файл · до 15 МБ"}</span>
+            <strong>{loading ? "Читаем кредитные истории…" : dragging ? "Отпустите файлы здесь" : "Перетащите PDF или ZIP сюда"}</strong>
+            <span>{loading ? "Последовательно сверяем договоры и платежи" : dragging ? "Сразу начнем анализ отчетов" : "любое количество отчетов · до 50 МБ на файл"}</span>
           </div>
-          {!loading && <button type="button">Выбрать отчет <Icon name="arrow" /></button>}
+          {!loading && <button type="button">Выбрать отчеты <Icon name="arrow" /></button>}
           {loading && <div className="progress"><i /></div>}
         </div>
         {error && <div className="error-banner">{error}</div>}
@@ -124,15 +143,15 @@ function UploadScreen({ onLoaded }: { onLoaded: (analysis: Analysis) => void }) 
           <span>Код доступа <small>(если задан при развертывании)</small></span>
           <input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder="Не требуется локально" />
         </label>
-        <div className="privacy-note"><Icon name="shield" /><span><strong>Без хранения данных.</strong> PDF обрабатывается в памяти и удаляется сразу после анализа.</span></div>
+        <div className="privacy-note"><Icon name="shield" /><span><strong>Без хранения данных.</strong> PDF и ZIP обрабатываются в памяти и удаляются сразу после анализа.</span></div>
       </section>
       <footer className="upload-footer"><span>ОКБ v3.10 / v3.17</span><span>Расчеты являются оценкой, не юридическим заключением</span></footer>
     </main>
   );
 }
 
-function MetricCard({ label, value, note, tone }: { label: string; value: string; note: string; tone?: string }) {
-  return <article className={`metric-card ${tone || ""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
+function MetricCard({ label, value, note, tone, progress }: { label: string; value: string; note: string; tone?: string; progress?: number | null }) {
+  return <article className={`metric-card ${tone || ""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small>{progress != null && <i className="debt-progress" aria-hidden="true"><span style={{ width: `${progress}%` }} /></i>}</article>;
 }
 
 function Field({ label, value, onChange, suffix }: { label: string; value: number | null; onChange: (value: number | null) => void; suffix: string }) {
@@ -213,7 +232,7 @@ const DEFAULT_SETTINGS: ScenarioSettings = {
   largeDebtThreshold: 300_000,
 };
 
-function Dashboard({ analysis, onReset }: { analysis: Analysis; onReset: () => void }) {
+function Dashboard({ analysis, onReset, theme, onToggleTheme, reportIndex, reportCount, onPrevious, onNext }: { analysis: Analysis; onReset: () => void; theme: Theme; onToggleTheme: () => void; reportIndex: number; reportCount: number; onPrevious: () => void; onNext: () => void }) {
   const auto = analysis.summary.bank_projection;
   const [settings, setSettings] = useState<ScenarioSettings>(() => ({ ...DEFAULT_SETTINGS }));
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -223,6 +242,14 @@ function Dashboard({ analysis, onReset }: { analysis: Analysis; onReset: () => v
   const charges = paid.interest + paid.other;
   const chargesShare = paid.total > 0 ? charges / paid.total * 100 : 0;
   const debt = analysis.summary.reported_total_debt ?? analysis.summary.calculated_total_debt;
+  const activeContracts = analysis.contracts.filter((contract) => contract.status === "active");
+  const initialAmountsKnown = activeContracts.length > 0 && activeContracts.every((contract) => contract.initial_amount != null && contract.initial_amount > 0);
+  const initialAmount = initialAmountsKnown ? activeContracts.reduce((sum, contract) => sum + (contract.initial_amount || 0), 0) : null;
+  const debtRemainingPercent = debt === 0 ? 0 : initialAmount ? Math.min(100, Math.round(debt / initialAmount * 100)) : null;
+  const debtTone = debtRemainingPercent == null ? "ink" : debtRemainingPercent >= 80 ? "debt debt-critical" : debtRemainingPercent >= 50 ? "debt debt-warning" : "debt debt-good";
+  const debtNote = debtRemainingPercent == null
+    ? `${analysis.summary.active_count} действующих договора`
+    : debtRemainingPercent === 0 ? "действующие долги погашены" : `осталось ${debtRemainingPercent}% от выданной суммы`;
   const largeRisks = analysis.compliance.low_payment_contracts.filter((item) => item.status === "active" && item.balance >= settings.largeDebtThreshold);
   const needsReview = analysis.compliance.low_payment_contracts.length > 0 || analysis.compliance.proximity_groups.length > 0 || largeRisks.length > 0;
   const riskLevel: RiskLevel = debt >= 700_000 || largeRisks.length > 0 || analysis.compliance.low_payment_contracts.length >= 3
@@ -284,8 +311,12 @@ function Dashboard({ analysis, onReset }: { analysis: Analysis; onReset: () => v
   return <main className={`dashboard-page risk-${riskLevel}`}>
     <header className="topbar">
       <div className="brand compact"><span className="brand-mark">Ф</span><span>Финразбор</span></div>
-      <div className="client-meta"><strong>{analysis.report.customer_name || "Клиент"}</strong><span>{analysis.report.provider} · отчет от {fmtDate(analysis.report.generated_at)}</span></div>
-      <div className="top-actions"><button className="ghost" onClick={onReset}>Другой отчет</button><button className="icon-button" onClick={() => window.print()} title="Печать"><Icon name="print" /></button></div>
+      <div className="client-navigation">
+        {reportCount > 1 && <button type="button" className="report-nav-button previous" onClick={onPrevious} aria-label="Предыдущий отчет" title="Предыдущий отчет"><Icon name="arrow" /></button>}
+        <div className="client-meta"><strong>{analysis.report.customer_name || "Клиент"}</strong><span>{analysis.report.provider} · отчет от {fmtDate(analysis.report.generated_at)}{reportCount > 1 ? ` · ${reportIndex + 1} / ${reportCount}` : ""}</span></div>
+        {reportCount > 1 && <button type="button" className="report-nav-button" onClick={onNext} aria-label="Следующий отчет" title="Следующий отчет"><Icon name="arrow" /></button>}
+      </div>
+      <div className="top-actions"><button className="ghost" onClick={onReset}>Другой отчет</button><ThemeToggle theme={theme} onToggle={onToggleTheme} compact /><button className="icon-button" onClick={() => window.print()} title="Печать"><Icon name="print" /></button></div>
     </header>
 
     <div className="dashboard-shell">
@@ -297,7 +328,7 @@ function Dashboard({ analysis, onReset }: { analysis: Analysis; onReset: () => v
       {analysis.warnings.length > 0 && <div className="warnings">{analysis.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
 
       <section className="metrics reveal delay-one">
-        <MetricCard label="Текущий долг" value={fmtMoney(debt)} note={`${analysis.summary.active_count} действующих договора`} tone="ink" />
+        <MetricCard label="Текущий долг" value={fmtMoney(debt)} note={debtNote} tone={debtTone} progress={debtRemainingPercent} />
         <MetricCard label="Уже внесено" value={fmtMoney(paid.total)} note="по действующим обязательствам" />
         <MetricCard label="Ушло на проценты" value={fmtMoney(charges)} note={`${number.format(chargesShare)}% всех внесенных денег`} tone="danger" />
         <MetricCard label="В погашение тела" value={fmtMoney(paid.principal)} note="по данным кредитной истории" tone="positive" />
@@ -350,7 +381,15 @@ function Dashboard({ analysis, onReset }: { analysis: Analysis; onReset: () => v
 }
 
 export default function App() {
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [analyses, setAnalyses] = useState<Analysis[]>([]);
+  const [activeReport, setActiveReport] = useState(0);
+  const [theme, setTheme] = useState<Theme>(() => localStorage.getItem("finrazbor-theme") === "dark" ? "dark" : "light");
+  const toggleTheme = () => setTheme((current) => current === "light" ? "dark" : "light");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    localStorage.setItem("finrazbor-theme", theme);
+  }, [theme]);
   useEffect(() => {
     const root = document.getElementById("root");
     if (!root) return;
@@ -364,5 +403,26 @@ export default function App() {
     observer.observe(root, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
   }, []);
-  return analysis ? <Dashboard analysis={analysis} onReset={() => setAnalysis(null)} /> : <UploadScreen onLoaded={setAnalysis} />;
+  const resetReports = () => {
+    setAnalyses([]);
+    setActiveReport(0);
+  };
+  const loadReports = (loaded: Analysis[]) => {
+    setAnalyses(loaded);
+    setActiveReport(0);
+  };
+  const moveReport = (direction: number) => setActiveReport((current) => (current + direction + analyses.length) % analyses.length);
+  return analyses.length
+    ? <Dashboard
+        key={activeReport}
+        analysis={analyses[activeReport]}
+        onReset={resetReports}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        reportIndex={activeReport}
+        reportCount={analyses.length}
+        onPrevious={() => moveReport(-1)}
+        onNext={() => moveReport(1)}
+      />
+    : <UploadScreen onLoaded={loadReports} theme={theme} onToggleTheme={toggleTheme} />;
 }

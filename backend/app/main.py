@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .parser import ReportParseError, analyze_pdf
 
 
-MAX_PDF_SIZE = 15 * 1024 * 1024
+MAX_PDF_SIZE = 50 * 1024 * 1024
 app = FastAPI(title="Credit Report Sales API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -49,7 +49,7 @@ async def analyze_report(
     payload = await file.read(MAX_PDF_SIZE + 1)
     await file.close()
     if len(payload) > MAX_PDF_SIZE:
-        raise HTTPException(status_code=413, detail="PDF превышает лимит 15 МБ")
+        raise HTTPException(status_code=413, detail="PDF превышает лимит 50 МБ")
     return analyze_pdf(payload)
 
 

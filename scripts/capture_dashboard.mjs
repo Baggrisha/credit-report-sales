@@ -7,9 +7,9 @@ const targetUrl = process.argv[4] || "http://127.0.0.1:8765";
 const viewportWidth = Number(process.argv[5] || 1440);
 const viewportHeight = Number(process.argv[6] || 1200);
 const mode = process.argv[7] || "file-input";
-const printMode = mode === "print";
-const dragMode = mode === "drag" || mode === "drag-after-invalid";
-const invalidPath = process.argv[8];
+const printMode = mode === "print" || mode === "dark-print";
+const dragMode = mode === "drag" || mode === "drag-after-invalid" || mode === "drag-hover";
+const auxiliaryPath = process.argv[8];
 
 if (!reportPath) {
   throw new Error("Usage: node scripts/capture_dashboard.mjs REPORT.pdf [OUTPUT.png] [URL]");
@@ -75,15 +75,15 @@ try {
       returnByValue: true,
     });
     const point = JSON.parse(dropzone.result.value);
-    const dispatchFile = async (path, mimeType) => {
+    const dispatchFile = async (path, mimeType, shouldDrop = true) => {
       const data = { items: [{ mimeType, data: "" }], files: [path], dragOperationsMask: 1 };
       await call("Input.dispatchDragEvent", { type: "dragEnter", ...point, data });
       await call("Input.dispatchDragEvent", { type: "dragOver", ...point, data });
-      await call("Input.dispatchDragEvent", { type: "drop", ...point, data });
+      if (shouldDrop) await call("Input.dispatchDragEvent", { type: "drop", ...point, data });
     };
     if (mode === "drag-after-invalid") {
-      if (!invalidPath) throw new Error("drag-after-invalid mode requires an invalid file path");
-      await dispatchFile(invalidPath, "image/png");
+      if (!auxiliaryPath) throw new Error("drag-after-invalid mode requires an invalid file path");
+      await dispatchFile(auxiliaryPath, "image/png");
       await sleep(300);
       const invalidState = await call("Runtime.evaluate", {
         expression: "document.querySelector('.error-banner')?.textContent || ''",
@@ -93,11 +93,28 @@ try {
         throw new Error("Invalid file did not produce a PDF validation error");
       }
     }
-    await dispatchFile(reportPath, "application/pdf");
+    await dispatchFile(reportPath, "application/pdf", mode !== "drag-hover");
   } else {
-    await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: [reportPath] });
+    if (mode === "multiple" && !auxiliaryPath) throw new Error("multiple mode requires a second PDF path");
+    await call("DOM.setFileInputFiles", { nodeId: input.nodeId, files: mode === "multiple" ? [reportPath, auxiliaryPath] : [reportPath] });
   }
-  await sleep(2500);
+  if (mode === "drag-hover") {
+    await sleep(500);
+    const hoverState = await call("Runtime.evaluate", {
+      expression: "JSON.stringify((() => { const zone = document.querySelector('.dropzone'); const rect = zone?.getBoundingClientRect(); return { dragging: zone?.classList.contains('dragging'), height: rect?.height || 0, width: rect?.width || 0 }; })())",
+      returnByValue: true,
+    });
+    const hover = JSON.parse(hoverState.result.value);
+    if (!hover.dragging || hover.height < 270) throw new Error(`Dropzone did not expand: ${hoverState.result.value}`);
+    const screenshot = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+    await writeFile(outputPath, Buffer.from(screenshot.data, "base64"));
+    console.log(JSON.stringify({ outputPath, mode, hover }));
+    socket.close();
+    browser.kill("SIGTERM");
+    process.exit(0);
+  }
+
+  await sleep(mode === "multiple" ? 5000 : 2500);
 
   const state = await call("Runtime.evaluate", {
     expression: "JSON.stringify({title: document.title, dashboard: !!document.querySelector('.dashboard-page'), clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth, text: document.body.innerText.slice(0, 200)})",
@@ -110,6 +127,53 @@ try {
   if (mode === "settings") {
     await call("Runtime.evaluate", { expression: "document.querySelector('.settings-button')?.click()" });
     await sleep(300);
+  }
+
+  if (mode === "dark" || mode === "dark-print") {
+    const initialTheme = await call("Runtime.evaluate", { expression: "document.documentElement.dataset.theme || 'light'", returnByValue: true });
+    if (initialTheme.result.value === "dark") {
+      await call("Runtime.evaluate", { expression: "document.querySelector('.theme-toggle.compact')?.click()" });
+      await sleep(150);
+    }
+    await call("Runtime.evaluate", { expression: "document.querySelector('.theme-toggle.compact')?.click()" });
+    await sleep(300);
+    const themeState = await call("Runtime.evaluate", {
+      expression: "JSON.stringify({theme: document.documentElement.dataset.theme, stored: localStorage.getItem('finrazbor-theme')})",
+      returnByValue: true,
+    });
+    const selectedTheme = JSON.parse(themeState.result.value);
+    if (selectedTheme.theme !== "dark" || selectedTheme.stored !== "dark") {
+      throw new Error(`Dark theme was not persisted: ${themeState.result.value}`);
+    }
+  }
+
+  if (mode === "multiple") {
+    const firstReport = await call("Runtime.evaluate", {
+      expression: "JSON.stringify({name: document.querySelector('.client-meta strong')?.textContent || '', meta: document.querySelector('.client-meta span')?.textContent || '', arrows: document.querySelectorAll('.report-nav-button').length})",
+      returnByValue: true,
+    });
+    await call("Runtime.evaluate", { expression: "document.querySelector('.report-nav-button:not(.previous)')?.click()" });
+    await sleep(800);
+    const secondReport = await call("Runtime.evaluate", {
+      expression: "JSON.stringify({name: document.querySelector('.client-meta strong')?.textContent || '', meta: document.querySelector('.client-meta span')?.textContent || ''})",
+      returnByValue: true,
+    });
+    const first = JSON.parse(firstReport.result.value);
+    const second = JSON.parse(secondReport.result.value);
+    if (first.arrows !== 2 || first.name === second.name || !first.meta.includes("1 / 2") || !second.meta.includes("2 / 2")) {
+      throw new Error(`Multiple report navigation failed: ${JSON.stringify({ first, second })}`);
+    }
+  }
+
+  if (["debt-critical", "debt-warning", "debt-good"].includes(mode)) {
+    const debtState = await call("Runtime.evaluate", {
+      expression: "JSON.stringify({classes: document.querySelector('.metric-card')?.className || '', note: document.querySelector('.metric-card small')?.textContent || '', progress: document.querySelector('.debt-progress span')?.style.width || ''})",
+      returnByValue: true,
+    });
+    const debtCard = JSON.parse(debtState.result.value);
+    if (!debtCard.classes.includes(mode) || !debtCard.progress) {
+      throw new Error(`Debt tone mismatch for ${mode}: ${debtState.result.value}`);
+    }
   }
 
   if (mode === "legal-copy") {

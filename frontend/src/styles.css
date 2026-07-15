@@ -142,6 +142,7 @@ button { cursor: pointer; }
 .metric-card.ink { color: white; background: var(--risk-dark); }
 .metric-card.ink span, .metric-card.ink strong, .metric-card.ink small { color: white; }
 .metric-card.danger strong { color: #ef6b57; }
+.metric-card.warning strong { color: #bd7d12; }
 .metric-card.positive strong { color: #81c341; }
 .metric-card.debt { --debt-accent: #81c341; color: white; border-left: 4px solid var(--debt-accent); background: #1c2a18; }
 .metric-card.debt-warning { --debt-accent: #e3aa2d; background: #342d1d; }
@@ -240,6 +241,10 @@ button { cursor: pointer; }
 .risk-grid h3 { margin: 0; font-size: 13px; }
 .risk-grid p { color: #a7a7a7; font-size: 10px; line-height: 1.5; }
 .risk-grid .setting-field { margin-top: 18px; color: #aeb9b6; }
+.threshold-presets { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.threshold-presets button { padding: 5px 8px; border: 1px solid #505552; border-radius: 5px; color: #b9bfbc; background: transparent; font-size: 9px; font-weight: 700; }
+.threshold-presets button:hover, .threshold-presets button.active { border-color: #81c341; color: #dff4cc; background: rgba(129,195,65,.12); }
+.risk-grid .threshold-current { display: block; margin-top: 8px; color: #7f8984; font-size: 9px; line-height: 1.35; }
 .legal-actions { margin-top: 20px; display: flex; align-items: center; gap: 14px; }
 .legal-actions p { max-width: 520px; margin: 0; color: #858e89; font-size: 9px; line-height: 1.4; }
 .legal-copy { padding: 11px 14px; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; border: 1px solid var(--risk-color); border-radius: 6px; color: white; background: transparent; font-size: 10px; font-weight: 700; }
@@ -256,6 +261,7 @@ button { cursor: pointer; }
 [data-theme="dark"] .dashboard-page.risk-warning { --risk-soft: #392f19; --risk-text: #f0c45e; --risk-dark: #2c2517; --risk-ring: rgba(227,170,45,.18); }
 [data-theme="dark"] .dashboard-page.risk-danger { --risk-soft: #392f19; --risk-text: #f0c45e; --risk-dark: #2c2517; --risk-ring: rgba(227,170,45,.18); }
 [data-theme="dark"] .metric-card, [data-theme="dark"] .section-card { border: 1px solid var(--line); box-shadow: 0 9px 28px rgba(0,0,0,.2); }
+[data-theme="dark"] .metric-card.warning strong { color: #e3aa2d; }
 [data-theme="dark"] .sales-thesis { border: 1px solid #353b37; background: linear-gradient(120deg, var(--risk-dark), #222624); }
 [data-theme="dark"] .warnings span { color: #f1c56f; background: #382f1c; }
 [data-theme="dark"] .settings-panel { border-color: var(--line); background: #151815; }

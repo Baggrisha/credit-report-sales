@@ -69,6 +69,9 @@ try {
     nodeId: document.root.nodeId,
     selector: "input[type=file]",
   });
+  if (mode === "threshold" || mode === "threshold-pages") {
+    await call("Runtime.evaluate", { expression: "localStorage.removeItem('finrazbor-large-debt-threshold')" });
+  }
   if (dragMode) {
     const dropzone = await call("Runtime.evaluate", {
       expression: "JSON.stringify((() => { const r = document.querySelector('.dropzone').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })())",
@@ -162,6 +165,44 @@ try {
     const second = JSON.parse(secondReport.result.value);
     if (first.arrows !== 2 || first.name === second.name || !first.meta.includes("1 / 2") || !second.meta.includes("2 / 2")) {
       throw new Error(`Multiple report navigation failed: ${JSON.stringify({ first, second })}`);
+    }
+  }
+
+  if (mode === "threshold" || mode === "threshold-pages") {
+    const thresholdState = await call("Runtime.evaluate", {
+      expression: `JSON.stringify((() => {
+        const card = document.querySelector('.risk-grid article:nth-child(3)');
+        const input = card?.querySelector('input');
+        const before = card?.querySelector(':scope > strong')?.textContent || '';
+        if (!input) return { before, after: '', value: '', missing: true };
+        input.focus();
+        input.select();
+        return { before, value: input.value };
+      })())`,
+      returnByValue: true,
+    });
+    await call("Input.insertText", { text: "2000000" });
+    await sleep(300);
+    const updatedThreshold = await call("Runtime.evaluate", {
+      expression: "JSON.stringify({count: document.querySelector('.risk-grid article:nth-child(3) > strong')?.textContent || '', value: document.querySelector('.risk-grid article:nth-child(3) input')?.value || '', text: document.querySelector('.threshold-current')?.textContent || ''})",
+      returnByValue: true,
+    });
+    const before = JSON.parse(thresholdState.result.value);
+    const after = JSON.parse(updatedThreshold.result.value);
+    if (before.missing || (mode === "threshold" && before.before === after.count) || after.value !== "2000000" || after.text.replace(/\D/g, "") !== "2000000") {
+      throw new Error(`Risk threshold did not update: ${JSON.stringify({ before, after })}`);
+    }
+    if (mode === "threshold-pages") {
+      await call("Runtime.evaluate", { expression: "document.querySelector('.report-nav-button:not(.previous)')?.click()" });
+      await sleep(500);
+      const nextReportThreshold = await call("Runtime.evaluate", {
+        expression: "JSON.stringify({value: document.querySelector('.risk-grid article:nth-child(3) input')?.value || '', meta: document.querySelector('.client-meta span')?.textContent || '', stored: localStorage.getItem('finrazbor-large-debt-threshold')})",
+        returnByValue: true,
+      });
+      const next = JSON.parse(nextReportThreshold.result.value);
+      if (next.value !== "2000000" || next.stored !== "2000000" || !next.meta.includes("2 / 2")) {
+        throw new Error(`Risk threshold was reset between reports: ${nextReportThreshold.result.value}`);
+      }
     }
   }
 

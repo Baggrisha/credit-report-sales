@@ -231,13 +231,27 @@ const DEFAULT_SETTINGS: ScenarioSettings = {
   bankMonths: null,
   largeDebtThreshold: 300_000,
 };
+const LARGE_DEBT_THRESHOLD_KEY = "finrazbor-large-debt-threshold";
 
 function Dashboard({ analysis, onReset, theme, onToggleTheme, reportIndex, reportCount, onPrevious, onNext }: { analysis: Analysis; onReset: () => void; theme: Theme; onToggleTheme: () => void; reportIndex: number; reportCount: number; onPrevious: () => void; onNext: () => void }) {
   const auto = analysis.summary.bank_projection;
-  const [settings, setSettings] = useState<ScenarioSettings>(() => ({ ...DEFAULT_SETTINGS }));
+  const [settings, setSettings] = useState<ScenarioSettings>(() => {
+    const storedThresholdValue = localStorage.getItem(LARGE_DEBT_THRESHOLD_KEY);
+    const storedThreshold = Number(storedThresholdValue);
+    return {
+      ...DEFAULT_SETTINGS,
+      largeDebtThreshold: storedThresholdValue !== null && Number.isFinite(storedThreshold) && storedThreshold >= 0
+        ? storedThreshold
+        : DEFAULT_SETTINGS.largeDebtThreshold,
+    };
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notification, setNotification] = useState("");
   const notificationTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(LARGE_DEBT_THRESHOLD_KEY, String(settings.largeDebtThreshold));
+  }, [settings.largeDebtThreshold]);
   const paid = analysis.summary.paid;
   const charges = paid.interest + paid.other;
   const chargesShare = paid.total > 0 ? charges / paid.total * 100 : 0;
@@ -330,7 +344,7 @@ function Dashboard({ analysis, onReset, theme, onToggleTheme, reportIndex, repor
       <section className="metrics reveal delay-one">
         <MetricCard label="Текущий долг" value={fmtMoney(debt)} note={debtNote} tone={debtTone} progress={debtRemainingPercent} />
         <MetricCard label="Уже внесено" value={fmtMoney(paid.total)} note="по действующим обязательствам" />
-        <MetricCard label="Ушло на проценты" value={fmtMoney(charges)} note={`${number.format(chargesShare)}% всех внесенных денег`} tone="danger" />
+        <MetricCard label="Ушло на проценты" value={fmtMoney(charges)} note={`${number.format(chargesShare)}% всех внесенных денег`} tone="warning" />
         <MetricCard label="В погашение тела" value={fmtMoney(paid.principal)} note="по данным кредитной истории" tone="positive" />
       </section>
 
@@ -370,7 +384,7 @@ function Dashboard({ analysis, onReset, theme, onToggleTheme, reportIndex, repor
         <div className="risk-grid">
           <article className={riskTone(analysis.compliance.low_payment_contracts.length)}><span>01</span><strong>{analysis.compliance.low_payment_contracts.length}</strong><h3>Менее 3 платежей</h3><p>{analysis.compliance.low_payment_contracts.length ? analysis.compliance.low_payment_contracts.map((item) => `${item.creditor}: ${item.payment_count}`).join(" · ") : "Таких договоров не найдено"}</p></article>
           <article className={riskTone(analysis.compliance.proximity_groups.length)}><span>02</span><strong>{analysis.compliance.proximity_groups.length}</strong><h3>Кредиты за &lt; 4 дней</h3><p>{analysis.compliance.proximity_groups.length ? analysis.compliance.proximity_groups.map((group) => group.creditors.join(" + ")).join(" · ") : "Близких дат открытия не найдено"}</p></article>
-          <article className={riskTone(largeRisks.length)}><span>03</span><strong>{largeRisks.length}</strong><h3>Крупный долг + мало платежей</h3><p>Порог: {fmtMoney(settings.largeDebtThreshold)}</p><Field label="Изменить порог" value={settings.largeDebtThreshold} onChange={(value) => patchSettings({ largeDebtThreshold: value ?? 0 })} suffix="₽" /></article>
+          <article className={riskTone(largeRisks.length)}><span>03</span><strong>{largeRisks.length}</strong><h3>Крупный долг + мало платежей</h3><p>{largeRisks.length ? `Под проверку: ${largeRisks.map((item) => item.creditor).join(" · ")}` : "Договоров выше выбранной суммы нет"}</p><Field label="Считать крупным долгом от" value={settings.largeDebtThreshold} onChange={(value) => patchSettings({ largeDebtThreshold: value ?? 0 })} suffix="₽" /><div className="threshold-presets">{[300_000, 500_000, 1_000_000].map((value) => <button type="button" className={settings.largeDebtThreshold === value ? "active" : ""} key={value} onClick={() => patchSettings({ largeDebtThreshold: value })}>{value === 1_000_000 ? "1 млн" : `${value / 1000} тыс.`}</button>)}</div><small className="threshold-current">Текущий порог: {fmtMoney(settings.largeDebtThreshold)} · пересчет сразу</small></article>
         </div>
         <div className="legal-actions"><button className="legal-copy" onClick={() => void copy(legalText, "Сводка для юриста скопирована")}><Icon name="copy" /> Скопировать сводку для юриста</button><p>Кнопка копирует клиента, долг и все найденные риски в буфер обмена для передачи специалисту.</p></div>
       </section>

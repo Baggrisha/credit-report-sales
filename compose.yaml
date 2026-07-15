@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ACCESS_CODE: ${APP_ACCESS_CODE:-}
+    restart: unless-stopped

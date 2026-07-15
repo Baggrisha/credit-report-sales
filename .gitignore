@@ -1,0 +1,12 @@
+.env
+.venv/
+.venv312/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+node_modules/
+*.tsbuildinfo
+backend/static/
+*.pdf
+*.log
+.DS_Store

@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: credit-report-sales
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ACCESS_CODE
+        sync: false

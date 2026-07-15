@@ -1,0 +1,7 @@
+.git
+.env
+.venv*
+frontend/node_modules
+backend/static
+*.pdf
+*.log

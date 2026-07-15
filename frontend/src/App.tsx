@@ -1,0 +1,368 @@
+import { useEffect, useRef, useState } from "react";
+import { analyzeReport } from "./api";
+import type { Analysis, Contract, ScenarioSettings } from "./types";
+import { chooseSalesMessage, type RiskLevel } from "./salesMessages";
+
+const ruble = new Intl.NumberFormat("ru-RU", {
+  style: "currency",
+  currency: "RUB",
+  maximumFractionDigits: 0,
+});
+const number = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
+const shortDate = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric" });
+const RUSSIAN_SHORT_WORD = /(^|[\s(«„"])(а|без|в|во|для|до|за|и|из|к|ко|на|не|ни|но|о|об|от|по|под|при|с|со|у)\s+(?=[А-Яа-яЁё0-9])/gi;
+
+function bindRussianPrepositions(root: Node) {
+  const textNodes: Text[] = [];
+  if (root.nodeType === Node.TEXT_NODE) {
+    textNodes.push(root as Text);
+  } else {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+  }
+  for (const node of textNodes) {
+    if (node.parentElement?.closest("script, style, input, textarea")) continue;
+    const current = node.nodeValue || "";
+    const formatted = current.replace(RUSSIAN_SHORT_WORD, "$1$2\u00a0");
+    if (formatted !== current) node.nodeValue = formatted;
+  }
+}
+
+function fmtMoney(value: number | null | undefined) {
+  return value == null ? "Нужно уточнить" : ruble.format(value);
+}
+
+function fmtDate(value: string | null) {
+  return value ? shortDate.format(new Date(`${value}T12:00:00`)) : "Нет данных";
+}
+
+function riskTone(count: number) {
+  return count >= 3 ? "danger" : count >= 1 ? "warning" : "safe";
+}
+
+function Icon({ name }: { name: "upload" | "shield" | "copy" | "print" | "arrow" | "check" }) {
+  const paths = {
+    upload: <><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></>,
+    shield: <><path d="M12 3 5 6v5c0 4.6 2.9 8.1 7 10 4.1-1.9 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></>,
+    copy: <><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></>,
+    print: <><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/></>,
+    arrow: <><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></>,
+    check: <path d="m5 12 4 4L19 6"/>,
+  };
+  return <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
+}
+
+function UploadScreen({ onLoaded }: { onLoaded: (analysis: Analysis) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [accessCode, setAccessCode] = useState(sessionStorage.getItem("access-code") || "");
+
+  async function handleFile(file?: File) {
+    if (!file || loading) return;
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setError("Выберите кредитный отчет в формате PDF");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      sessionStorage.setItem("access-code", accessCode);
+      onLoaded(await analyzeReport(file, accessCode));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось обработать отчет");
+    } finally {
+      setLoading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <main className="upload-page">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+      <header className="brand"><span className="brand-mark">Ф</span><span>Финразбор</span></header>
+      <section className="upload-hero">
+        <p className="eyebrow">КРЕДИТНАЯ ИСТОРИЯ → ПОНЯТНЫЙ РАЗГОВОР</p>
+        <h1>Покажите клиенту,<br /><em>куда уходят его деньги.</em></h1>
+        <p className="lead">Загрузите отчет ОКБ. За несколько секунд получите финансовую картину, сравнение с БФЛ и РДГ и отдельные сигналы для юриста.</p>
+        <div
+          className={`dropzone ${dragging ? "dragging" : ""} ${loading ? "loading" : ""}`}
+          onDragEnter={(event) => { event.preventDefault(); dragDepth.current += 1; setDragging(true); }}
+          onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+          onDragLeave={(event) => { event.preventDefault(); dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragging(false); }}
+          onDrop={(event) => {
+            event.preventDefault();
+            dragDepth.current = 0;
+            setDragging(false);
+            const files = Array.from(event.dataTransfer.files);
+            void handleFile(files.find((file) => file.name.toLowerCase().endsWith(".pdf")) || files[0]);
+          }}
+          onClick={() => !loading && inputRef.current?.click()}
+          role="button"
+          tabIndex={0}
+          aria-busy={loading}
+          aria-label="Перетащите кредитный отчет PDF сюда или нажмите для выбора файла"
+          onKeyDown={(event) => event.key === "Enter" && inputRef.current?.click()}
+        >
+          <input ref={inputRef} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => void handleFile(event.target.files?.[0])} />
+          <span className="upload-icon"><Icon name="upload" /></span>
+          <div>
+            <strong>{loading ? "Читаем кредитную историю…" : dragging ? "Отпустите PDF здесь" : "Перетащите PDF сюда"}</strong>
+            <span>{loading ? "Сверяем договоры и платежи" : dragging ? "Сразу начнем анализ отчета" : "или нажмите, чтобы выбрать файл · до 15 МБ"}</span>
+          </div>
+          {!loading && <button type="button">Выбрать отчет <Icon name="arrow" /></button>}
+          {loading && <div className="progress"><i /></div>}
+        </div>
+        {error && <div className="error-banner">{error}</div>}
+        <label className="access-code">
+          <span>Код доступа <small>(если задан при развертывании)</small></span>
+          <input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder="Не требуется локально" />
+        </label>
+        <div className="privacy-note"><Icon name="shield" /><span><strong>Без хранения данных.</strong> PDF обрабатывается в памяти и удаляется сразу после анализа.</span></div>
+      </section>
+      <footer className="upload-footer"><span>ОКБ v3.10 / v3.17</span><span>Расчеты являются оценкой, не юридическим заключением</span></footer>
+    </main>
+  );
+}
+
+function MetricCard({ label, value, note, tone }: { label: string; value: string; note: string; tone?: string }) {
+  return <article className={`metric-card ${tone || ""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
+}
+
+function Field({ label, value, onChange, suffix }: { label: string; value: number | null; onChange: (value: number | null) => void; suffix: string }) {
+  return <label className="setting-field"><span>{label}</span><div><input type="number" min="0" value={value ?? ""} placeholder="Авто" onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))} /><b>{suffix}</b></div></label>;
+}
+
+function ScenarioTable({ analysis, settings }: { analysis: Analysis; settings: ScenarioSettings }) {
+  const auto = analysis.summary.bank_projection;
+  const bankMonthly = settings.bankMonthly ?? (auto.monthly_payment || null);
+  const bankMonths = settings.bankMonths ?? (auto.months || null);
+  const unresolvedLabel = auto.unresolved_contracts === 1
+    ? "1 договор требует уточнения"
+    : `${auto.unresolved_contracts} договоров требуют уточнения`;
+  const bankTotal = settings.bankMonthly != null && settings.bankMonths != null
+    ? settings.bankMonthly * settings.bankMonths
+    : auto.unresolved_contracts === 0 ? auto.total : null;
+  const scenarios = [
+    { name: "Платить банкам", tag: auto.unresolved_contracts ? unresolvedLabel : "Расчет по отчету", monthly: bankMonthly, months: bankMonths, total: bankTotal, kind: "bank" },
+    { name: "БФЛ", tag: "Процедура", monthly: settings.bflCost / settings.bflMonths, months: settings.bflMonths, total: settings.bflCost, kind: "bfl" },
+    { name: "РДГ", tag: "Альтернативный сценарий", monthly: settings.rdgCost / settings.rdgMonths, months: settings.rdgMonths, total: settings.rdgCost, kind: "rdg" },
+  ];
+  return (
+    <div className="scenario-wrap">
+      <div className="scenario-grid scenario-head"><span>Вариант</span><span>Платеж / мес.</span><span>Срок</span><span>Всего отдаст</span><span>Экономия</span></div>
+      {scenarios.map((scenario) => {
+        const savings = bankTotal != null && scenario.total != null && scenario.kind !== "bank" ? bankTotal - scenario.total : null;
+        return <div className={`scenario-grid scenario-row ${scenario.kind}`} key={scenario.name}>
+          <div><strong>{scenario.name}</strong><small>{scenario.tag}</small></div>
+          <b>{fmtMoney(scenario.monthly)}</b>
+          <b>{scenario.months ? `${scenario.months} мес.` : "Уточнить"}</b>
+          <strong>{fmtMoney(scenario.total)}</strong>
+          <span className={savings != null && savings > 0 ? "saving" : "muted"}>{scenario.kind === "bank" ? "База сравнения" : savings == null ? "После уточнения" : savings > 0 ? `+ ${fmtMoney(savings)}` : fmtMoney(savings)}</span>
+        </div>;
+      })}
+    </div>
+  );
+}
+
+function ContractCard({ contract }: { contract: Contract }) {
+  const [open, setOpen] = useState(false);
+  const paidCharges = contract.paid.interest + contract.paid.other;
+  const projectionLabel = contract.projection?.status === "paid"
+    ? "Погашено"
+    : contract.projection?.status === "calculated" ? "Прогноз" : "Нужно уточнение";
+  const projectionValue = contract.projection?.status === "paid"
+    ? "Дальнейших платежей нет"
+    : contract.projection?.total != null
+      ? `${fmtMoney(contract.projection.total)} · ${contract.projection.months} мес.`
+      : contract.projection?.message;
+  return <article className={`contract-card ${contract.status}`}>
+    <button className="contract-summary" onClick={() => setOpen((value) => !value)}>
+      <div><span className={`status-dot ${contract.has_overdue_history ? "overdue" : ""}`} /><div><strong>{contract.creditor}</strong><small>{contract.status === "closed" ? "Закрыт" : contract.status_label}</small></div></div>
+      <div><small>Текущий долг</small><strong>{fmtMoney(contract.balance.total)}</strong></div>
+      <div><small>Уже внесено</small><strong>{fmtMoney(contract.paid.total)}</strong></div>
+      <span className={`chevron ${open ? "open" : ""}`}>⌄</span>
+    </button>
+    <div className={`contract-detail ${open ? "open" : ""}`}>
+      <div className="detail-grid">
+        <span>Открыт <b>{fmtDate(contract.deal_date)}</b></span>
+        <span>Сумма договора <b>{fmtMoney(contract.initial_amount)}</b></span>
+        <span>В тело <b>{fmtMoney(contract.paid.principal)}</b></span>
+        <span>Проценты и иное <b>{fmtMoney(paidCharges)}</b></span>
+        <span>ПСК <b>{contract.rates.psk == null ? "Нет данных" : `${number.format(contract.rates.psk)}%`}</b></span>
+        <span>Фактических платежей <b>{contract.actual_payment_count}{contract.payment_count_confidence === "low" ? "*" : ""}</b></span>
+      </div>
+      {contract.projection && <div className={`projection-note ${contract.projection.confidence}`}><span>{projectionLabel}</span><strong>{projectionValue}</strong></div>}
+    </div>
+  </article>;
+}
+
+const DEFAULT_SETTINGS: ScenarioSettings = {
+  bflCost: 200_000,
+  bflMonths: 15,
+  rdgCost: 150_000,
+  rdgMonths: 15,
+  bankMonthly: null,
+  bankMonths: null,
+  largeDebtThreshold: 300_000,
+};
+
+function Dashboard({ analysis, onReset }: { analysis: Analysis; onReset: () => void }) {
+  const auto = analysis.summary.bank_projection;
+  const [settings, setSettings] = useState<ScenarioSettings>(() => ({ ...DEFAULT_SETTINGS }));
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notification, setNotification] = useState("");
+  const notificationTimer = useRef<number | null>(null);
+  const paid = analysis.summary.paid;
+  const charges = paid.interest + paid.other;
+  const chargesShare = paid.total > 0 ? charges / paid.total * 100 : 0;
+  const debt = analysis.summary.reported_total_debt ?? analysis.summary.calculated_total_debt;
+  const largeRisks = analysis.compliance.low_payment_contracts.filter((item) => item.status === "active" && item.balance >= settings.largeDebtThreshold);
+  const needsReview = analysis.compliance.low_payment_contracts.length > 0 || analysis.compliance.proximity_groups.length > 0 || largeRisks.length > 0;
+  const riskLevel: RiskLevel = debt >= 700_000 || largeRisks.length > 0 || analysis.compliance.low_payment_contracts.length >= 3
+    ? "danger"
+    : debt >= 300_000 || needsReview ? "warning" : "safe";
+  const salesMessage = chooseSalesMessage(
+    riskLevel,
+    `${analysis.report.customer_name}-${debt}-${analysis.compliance.low_payment_contracts.length}`,
+  );
+
+  function patchSettings(patch: Partial<ScenarioSettings>) {
+    setSettings((current) => ({ ...current, ...patch }));
+  }
+
+  const salesText = `${analysis.report.customer_name || "Клиент"}: текущий долг ${fmtMoney(debt)}. Уже внесено ${fmtMoney(paid.total)}, из них ${fmtMoney(charges)} ушло на проценты и иные начисления. ${auto.total != null && auto.unresolved_contracts === 0 ? `При текущем сценарии банкам предстоит отдать около ${fmtMoney(auto.total)}.` : "Для точного прогноза выплаты банкам нужно уточнить платеж и срок."} БФЛ: ${fmtMoney(settings.bflCost)} за ${settings.bflMonths} месяцев. РДГ: ${fmtMoney(settings.rdgCost)} за ${settings.rdgMonths} месяцев. ${salesMessage}`;
+  const lowPaymentSummary = analysis.compliance.low_payment_contracts.length
+    ? analysis.compliance.low_payment_contracts.map((item) => `- ${item.creditor}: ${item.payment_count} платеж(а), долг ${fmtMoney(item.balance)}, статус: ${item.status === "active" ? "действующий" : "закрытый"}`).join("\n")
+    : "- не обнаружены";
+  const proximitySummary = analysis.compliance.proximity_groups.length
+    ? analysis.compliance.proximity_groups.map((group) => `- ${group.creditors.join(" + ")}: период ${group.days_window} дн.`).join("\n")
+    : "- не обнаружены";
+  const largeRiskSummary = largeRisks.length
+    ? largeRisks.map((item) => `- ${item.creditor}: долг ${fmtMoney(item.balance)}, платежей ${item.payment_count}`).join("\n")
+    : "- не обнаружены";
+  const legalText = `ПРОВЕРКА РИСКОВ\nКлиент: ${analysis.report.customer_name || "не указан"}\nОтчет: ${fmtDate(analysis.report.generated_at)}\nТекущий долг: ${fmtMoney(debt)}\nУровень внимания: ${riskLevel === "danger" ? "высокий" : riskLevel === "warning" ? "средний" : "низкий"}\n\nДОГОВОРЫ С МЕНЕЕ ЧЕМ 3 ПЛАТЕЖАМИ\n${lowPaymentSummary}\n\nКРЕДИТЫ, ОТКРЫТЫЕ МЕНЕЕ ЧЕМ ЗА 4 ДНЯ\n${proximitySummary}\n\nКРУПНЫЙ ДОЛГ И МАЛО ПЛАТЕЖЕЙ\n${largeRiskSummary}\n\nПередать юристу или старшему специалисту до заключения договора.`;
+
+  async function copy(value: string, message: string) {
+    try {
+      const copyWithoutPermissionPrompt = () => {
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        if (!copied) throw new Error("Copy command failed");
+      };
+
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(value);
+        } catch {
+          copyWithoutPermissionPrompt();
+        }
+      } else {
+        copyWithoutPermissionPrompt();
+      }
+      setNotification(message);
+    } catch {
+      setNotification("Не удалось скопировать сводку");
+    }
+    if (notificationTimer.current != null) window.clearTimeout(notificationTimer.current);
+    notificationTimer.current = window.setTimeout(() => setNotification(""), 2800);
+  }
+
+  return <main className={`dashboard-page risk-${riskLevel}`}>
+    <header className="topbar">
+      <div className="brand compact"><span className="brand-mark">Ф</span><span>Финразбор</span></div>
+      <div className="client-meta"><strong>{analysis.report.customer_name || "Клиент"}</strong><span>{analysis.report.provider} · отчет от {fmtDate(analysis.report.generated_at)}</span></div>
+      <div className="top-actions"><button className="ghost" onClick={onReset}>Другой отчет</button><button className="icon-button" onClick={() => window.print()} title="Печать"><Icon name="print" /></button></div>
+    </header>
+
+    <div className="dashboard-shell">
+      <section className="report-intro reveal">
+        <div><p className="eyebrow">ТЕКУЩАЯ СИТУАЦИЯ</p><h1>Финансовая картина <em>без банковского языка</em></h1></div>
+        <span className="verified"><Icon name="check" /> Сверено со сводкой ОКБ</span>
+      </section>
+
+      {analysis.warnings.length > 0 && <div className="warnings">{analysis.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
+
+      <section className="metrics reveal delay-one">
+        <MetricCard label="Текущий долг" value={fmtMoney(debt)} note={`${analysis.summary.active_count} действующих договора`} tone="ink" />
+        <MetricCard label="Уже внесено" value={fmtMoney(paid.total)} note="по действующим обязательствам" />
+        <MetricCard label="Ушло на проценты" value={fmtMoney(charges)} note={`${number.format(chargesShare)}% всех внесенных денег`} tone="danger" />
+        <MetricCard label="В погашение тела" value={fmtMoney(paid.principal)} note="по данным кредитной истории" tone="positive" />
+      </section>
+
+      <section className="sales-thesis reveal delay-two">
+        <div className="thesis-number">{Math.round(chargesShare)}<span>%</span></div>
+        <div><p className="eyebrow">ГЛАВНЫЙ ТЕЗИС ДЛЯ КЛИЕНТА</p><h2>Из уже внесенных {fmtMoney(paid.total)} на проценты и другие начисления ушло <mark>{fmtMoney(charges)}</mark>.</h2><p>{salesMessage}</p></div>
+        <button className="copy-button" onClick={() => void copy(salesText, "Аргумент для клиента скопирован")}><Icon name="copy" /> Скопировать аргумент</button>
+      </section>
+
+      <section className="comparison section-card reveal">
+        <div className="section-heading"><div><p className="eyebrow">ГЛАВНЫЙ ПРОДАЖНЫЙ ВОПРОС</p><h2>Платить дальше или решить вопрос через процедуру?</h2></div><button className="settings-button" onClick={() => setSettingsOpen((value) => !value)}>Настроить расчет <span>{settingsOpen ? "×" : "↗"}</span></button></div>
+        {settingsOpen && <div className="settings-panel">
+          <div className="settings-panel-head"><div><strong>Параметры сценариев</strong><span>Изменения сразу пересчитывают таблицу</span></div><button type="button" onClick={() => setSettings({ ...DEFAULT_SETTINGS })}>Сбросить</button></div>
+          <section className="settings-group bank"><div className="settings-group-head"><span>01</span><div><strong>Банки</strong><small>По отчету: {fmtMoney(auto.monthly_payment)} · {auto.months || "?"} мес.</small></div></div><div className="settings-fields">
+            <Field label="Платеж в месяц" value={settings.bankMonthly} onChange={(value) => patchSettings({ bankMonthly: value })} suffix="₽" />
+            <Field label="Осталось платить" value={settings.bankMonths} onChange={(value) => patchSettings({ bankMonths: value })} suffix="мес." />
+          </div></section>
+          <section className="settings-group bfl"><div className="settings-group-head"><span>02</span><div><strong>БФЛ</strong><small>Процедура банкротства</small></div></div><div className="settings-fields">
+            <Field label="Стоимость" value={settings.bflCost} onChange={(value) => patchSettings({ bflCost: value ?? 0 })} suffix="₽" />
+            <Field label="Срок" value={settings.bflMonths} onChange={(value) => patchSettings({ bflMonths: value || 1 })} suffix="мес." />
+          </div></section>
+          <section className="settings-group rdg"><div className="settings-group-head"><span>03</span><div><strong>РДГ</strong><small>Альтернативный сценарий</small></div></div><div className="settings-fields">
+            <Field label="Стоимость" value={settings.rdgCost} onChange={(value) => patchSettings({ rdgCost: value ?? 0 })} suffix="₽" />
+            <Field label="Срок" value={settings.rdgMonths} onChange={(value) => patchSettings({ rdgMonths: value || 1 })} suffix="мес." />
+          </div></section>
+        </div>}
+        <ScenarioTable analysis={analysis} settings={settings} />
+      </section>
+
+      <section className="contracts-section section-card">
+        <div className="section-heading"><div><p className="eyebrow">ДЕТАЛИ</p><h2>Договоры и платежи</h2></div><span className="pill">{analysis.summary.active_count} действующих · {analysis.summary.closed_count} закрытых</span></div>
+        <div className="contract-list">{analysis.contracts.map((contract) => <ContractCard key={contract.id} contract={contract} />)}</div>
+      </section>
+
+      <section className="compliance-section">
+        <div className="compliance-title"><div className="compliance-icon"><Icon name="shield" /></div><div><p className="eyebrow">ПРОВЕРКА РИСКОВ</p><h2>Что нужно проверить</h2><p>Передайте эти факты юристу или старшему специалисту до заключения договора.</p></div><span className={`review-badge ${needsReview ? "alert" : "clear"}`}>{needsReview ? "Требует проверки" : "Рисков не найдено"}</span></div>
+        <div className="risk-grid">
+          <article className={riskTone(analysis.compliance.low_payment_contracts.length)}><span>01</span><strong>{analysis.compliance.low_payment_contracts.length}</strong><h3>Менее 3 платежей</h3><p>{analysis.compliance.low_payment_contracts.length ? analysis.compliance.low_payment_contracts.map((item) => `${item.creditor}: ${item.payment_count}`).join(" · ") : "Таких договоров не найдено"}</p></article>
+          <article className={riskTone(analysis.compliance.proximity_groups.length)}><span>02</span><strong>{analysis.compliance.proximity_groups.length}</strong><h3>Кредиты за &lt; 4 дней</h3><p>{analysis.compliance.proximity_groups.length ? analysis.compliance.proximity_groups.map((group) => group.creditors.join(" + ")).join(" · ") : "Близких дат открытия не найдено"}</p></article>
+          <article className={riskTone(largeRisks.length)}><span>03</span><strong>{largeRisks.length}</strong><h3>Крупный долг + мало платежей</h3><p>Порог: {fmtMoney(settings.largeDebtThreshold)}</p><Field label="Изменить порог" value={settings.largeDebtThreshold} onChange={(value) => patchSettings({ largeDebtThreshold: value ?? 0 })} suffix="₽" /></article>
+        </div>
+        <div className="legal-actions"><button className="legal-copy" onClick={() => void copy(legalText, "Сводка для юриста скопирована")}><Icon name="copy" /> Скопировать сводку для юриста</button><p>Кнопка копирует клиента, долг и все найденные риски в буфер обмена для передачи специалисту.</p></div>
+      </section>
+    </div>
+    {notification && <div className="copy-toast" role="status">{notification}</div>}
+    <footer className="dashboard-footer"><span>Финразбор · {analysis.report.provider_label}</span><span>Расчеты носят оценочный характер и требуют проверки специалистом</span></footer>
+  </main>;
+}
+
+export default function App() {
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  useEffect(() => {
+    const root = document.getElementById("root");
+    if (!root) return;
+    bindRussianPrepositions(root);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === "characterData") bindRussianPrepositions(mutation.target);
+        mutation.addedNodes.forEach(bindRussianPrepositions);
+      }
+    });
+    observer.observe(root, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, []);
+  return analysis ? <Dashboard analysis={analysis} onReset={() => setAnalysis(null)} /> : <UploadScreen onLoaded={setAnalysis} />;
+}

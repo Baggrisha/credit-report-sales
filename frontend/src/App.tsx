@@ -162,14 +162,21 @@ function ScenarioTable({ analysis, settings }: { analysis: Analysis; settings: S
   const auto = analysis.summary.bank_projection;
   const bankMonthly = settings.bankMonthly ?? (auto.monthly_payment || null);
   const bankMonths = settings.bankMonths ?? (auto.months || null);
+  const hasManualBankOverrides = settings.bankMonthly != null || settings.bankMonths != null;
   const unresolvedLabel = auto.unresolved_contracts === 1
     ? "1 договор требует уточнения"
     : `${auto.unresolved_contracts} договоров требуют уточнения`;
-  const bankTotal = settings.bankMonthly != null && settings.bankMonths != null
-    ? settings.bankMonthly * settings.bankMonths
-    : auto.unresolved_contracts === 0 ? auto.total : null;
+  const calculatedBankTotal = bankMonthly != null && bankMonths != null ? bankMonthly * bankMonths : null;
+  const bankTotal = hasManualBankOverrides
+    ? calculatedBankTotal
+    : auto.unresolved_contracts === 0 && auto.total != null ? auto.total : calculatedBankTotal;
+  const bankTotalEstimated = bankTotal != null && auto.unresolved_contracts > 0;
+  const bankTag = hasManualBankOverrides && bankTotal != null
+    ? `${settings.bankMonthly != null ? "платеж вручную" : "платеж авто"} · ${settings.bankMonths != null ? "срок вручную" : "срок авто"}`
+    : bankTotalEstimated ? `Оценка: автоплатеж × автосрок · ${unresolvedLabel}`
+    : auto.unresolved_contracts ? unresolvedLabel : "Расчет по отчету";
   const scenarios = [
-    { name: "Платить банкам", tag: auto.unresolved_contracts ? unresolvedLabel : "Расчет по отчету", monthly: bankMonthly, months: bankMonths, total: bankTotal, kind: "bank" },
+    { name: "Платить банкам", tag: bankTag, monthly: bankMonthly, months: bankMonths, total: bankTotal, kind: "bank" },
     { name: "БФЛ", tag: "Процедура", monthly: settings.bflCost / settings.bflMonths, months: settings.bflMonths, total: settings.bflCost, kind: "bfl" },
     { name: "РДГ", tag: "Альтернативный сценарий", monthly: settings.rdgCost / settings.rdgMonths, months: settings.rdgMonths, total: settings.rdgCost, kind: "rdg" },
   ];
@@ -182,8 +189,8 @@ function ScenarioTable({ analysis, settings }: { analysis: Analysis; settings: S
           <div><strong>{scenario.name}</strong><small>{scenario.tag}</small></div>
           <b>{fmtMoney(scenario.monthly)}</b>
           <b>{scenario.months ? `${scenario.months} мес.` : "Уточнить"}</b>
-          <strong>{fmtMoney(scenario.total)}</strong>
-          <span className={savings != null && savings > 0 ? "saving" : "muted"}>{scenario.kind === "bank" ? "База сравнения" : savings == null ? "После уточнения" : savings > 0 ? `+ ${fmtMoney(savings)}` : fmtMoney(savings)}</span>
+          <strong>{scenario.kind === "bank" && bankTotalEstimated && scenario.total != null ? `≈ ${fmtMoney(scenario.total)}` : fmtMoney(scenario.total)}</strong>
+          <span className={savings != null && savings > 0 ? "saving" : "muted"}>{scenario.kind === "bank" ? "База сравнения" : savings == null ? "После уточнения" : bankTotalEstimated ? `≈ ${fmtMoney(savings)}` : savings > 0 ? `+ ${fmtMoney(savings)}` : fmtMoney(savings)}</span>
         </div>;
       })}
     </div>

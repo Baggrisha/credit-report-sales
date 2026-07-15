@@ -132,7 +132,61 @@ try {
     await sleep(300);
   }
 
-  if (mode === "dark" || mode === "dark-print") {
+  if (mode === "calculator-auto-term" || mode === "calculator-auto-payment") {
+    await call("Runtime.evaluate", { expression: "document.querySelector('.settings-button')?.click()" });
+    await sleep(300);
+    await call("Runtime.evaluate", {
+      expression: `(() => {
+        const inputs = document.querySelectorAll('.settings-group.bank input');
+        const input = inputs[${mode === "calculator-auto-term" ? 0 : 1}];
+        if (!input) return;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '${mode === "calculator-auto-term" ? "50000" : "60"}');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`,
+    });
+    await sleep(300);
+    const calculation = await call("Runtime.evaluate", {
+      expression: `JSON.stringify((() => {
+        const rows = [...document.querySelectorAll('.scenario-row')];
+        const values = (row) => [...row.children].map((cell) => cell.textContent?.trim() || '');
+        return {
+          bank: values(rows.find((row) => row.classList.contains('bank'))),
+          bfl: values(rows.find((row) => row.classList.contains('bfl'))),
+          inputs: [...document.querySelectorAll('.settings-group.bank input')].map((input) => input.value),
+        };
+      })())`,
+      returnByValue: true,
+    });
+    const result = JSON.parse(calculation.result.value);
+    const digits = (value) => String(value || '').replace(/\D/g, '');
+    const expected = mode === "calculator-auto-term"
+      ? { untouched: result.inputs[1], total: '1200000', saving: '1000000', tag: 'срок авто' }
+      : { untouched: result.inputs[0], total: '1080000', saving: '880000', tag: 'платеж авто' };
+    if (expected.untouched !== '' || digits(result.bank[3]) !== expected.total || digits(result.bfl[4]) !== expected.saving || !result.bank[0].includes(expected.tag)) {
+      throw new Error(`Auto term calculation failed: ${calculation.result.value}`);
+    }
+  }
+
+  if (mode === "calculator-auto-auto") {
+    const calculation = await call("Runtime.evaluate", {
+      expression: `JSON.stringify((() => {
+        const rows = [...document.querySelectorAll('.scenario-row')];
+        const values = (row) => [...row.children].map((cell) => cell.textContent?.trim() || '');
+        return {
+          bank: values(rows.find((row) => row.classList.contains('bank'))),
+          bfl: values(rows.find((row) => row.classList.contains('bfl'))),
+        };
+      })())`,
+      returnByValue: true,
+    });
+    const result = JSON.parse(calculation.result.value);
+    const digits = (value) => String(value || '').replace(/\D/g, '');
+    if (digits(result.bank[3]) !== '432000' || digits(result.bfl[4]) !== '232000' || !result.bank[0].includes('Оценка: автоплатеж × автосрок')) {
+      throw new Error(`Automatic calculation failed: ${calculation.result.value}`);
+    }
+  }
+
+  if (mode === "dark" || mode === "dark-print" || mode === "dark-economy") {
     const initialTheme = await call("Runtime.evaluate", { expression: "document.documentElement.dataset.theme || 'light'", returnByValue: true });
     if (initialTheme.result.value === "dark") {
       await call("Runtime.evaluate", { expression: "document.querySelector('.theme-toggle.compact')?.click()" });
@@ -147,6 +201,21 @@ try {
     const selectedTheme = JSON.parse(themeState.result.value);
     if (selectedTheme.theme !== "dark" || selectedTheme.stored !== "dark") {
       throw new Error(`Dark theme was not persisted: ${themeState.result.value}`);
+    }
+  }
+
+  if (mode === "dark-economy") {
+    const economyStyle = await call("Runtime.evaluate", {
+      expression: `JSON.stringify((() => {
+        const cell = document.querySelector('.scenario-row.bfl > span:last-child');
+        const style = cell ? getComputedStyle(cell) : null;
+        return { text: cell?.textContent?.trim() || '', color: style?.color || '', background: style?.backgroundColor || '', weight: style?.fontWeight || '' };
+      })())`,
+      returnByValue: true,
+    });
+    const economy = JSON.parse(economyStyle.result.value);
+    if (!economy.text.includes('₽') || economy.color !== 'rgb(32, 55, 20)' || economy.background !== 'rgba(0, 0, 0, 0)' || Number(economy.weight) < 700) {
+      throw new Error(`Dark economy cell is not readable: ${economyStyle.result.value}`);
     }
   }
 

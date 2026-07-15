@@ -274,6 +274,8 @@ button { cursor: pointer; }
 [data-theme="dark"] .setting-field input { color: var(--ink); background: transparent; }
 [data-theme="dark"] .scenario-row.rdg { color: var(--ink); border-color: #39562c; background: #1c2a18; }
 [data-theme="dark"] .saving { color: #9bd267; }
+[data-theme="dark"] .scenario-row.bfl .saving,
+[data-theme="dark"] .scenario-row.bfl .muted { color: #203714; font-weight: 800; }
 [data-theme="dark"] .pill { color: #a6da76; background: #1c2a18; }
 [data-theme="dark"] .status-dot { box-shadow: 0 0 0 4px #293d21; }
 [data-theme="dark"] .status-dot.overdue { box-shadow: 0 0 0 4px #452923; }
